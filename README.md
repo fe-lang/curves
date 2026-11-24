@@ -13,7 +13,7 @@ handle secrets.
 | `montgomery` | `Mont<M>` (prime field below 2^256 in Montgomery form, chosen by a `Modulus` type), `Field`, and the carry-chain word ops `adc`, `sbb`, `mac`, `mul_wide` |
 | `inversion` | Bernstein-Yang safegcd inverses: `invert`, `invert_256`, `invert_384` |
 | `bls_field`, `bls_tower` | BLS12-381's `Fp` (six 64-bit Montgomery limbs), `Field`, `Fp2`, `Fp6`, `Fp12` |
-| `bls_curve` | `ORDER`, Jacobian `Point<F>` and `Affine<F>` for G1 and G2, `g1_generator`, `g2_generator`, `on_g1`, `on_g2`, `in_subgroup`, `clear_cofactor`, `multiply_g1`, `multiply_two`, `msm`, `decompress_g1` |
+| `bls_curve` | `ORDER`, Jacobian `Point<F>` and `Affine<F>` for G1 and G2, `g1_generator`, `g2_generator`, `on_g1`, `on_g2`, `in_subgroup`, `clear_cofactor`, `multiply_g1`, `multiply_g2`, `multiply_two`, `msm`, `decompress_g1` |
 | `bls_map` | RFC 9380's `map_to_g1` and `map_to_g2` (field element to subgroup point; includes isogeny and cofactor clearing) |
 | `bls_pairing` | `miller_loop`, `miller_loop_lines` for fixed G2 points, `final_exponentiation`, `pairing_product_is_one` |
 | `kzg`, `kzg_lines` | `decode_kzg_g1`, `verify_proof`, and precomputed lines `NEG_G2_LINES`, `TAU_G2_LINES` for the mainnet trusted setup |
@@ -76,7 +76,9 @@ let valid = p256::verify(hash, r, s, x, y)
   check subgroup membership; use `kzg::decode_kzg_g1` to check both (accepting
   infinity). `Point::multiply` and `Affine::multiply` take any point and any
   scalar. `multiply_g1(point, scalar)` requires `point` in G1 (its
-  endomorphism is invalid off G1) and reduces `scalar` modulo `ORDER`.
+  endomorphism is invalid off G1) and reduces `scalar` modulo `ORDER`;
+  `multiply_g2(point, scalar)` requires `point` in G2 (`psi` is `[x]` only
+  there) and reduces `scalar` modulo `ORDER`.
   `multiply_two(a, s, b, t)` requires `a` and `b` in G1 and scalars below
   `ORDER`. `msm(points, scalars)`
   panics unless `points.len() == scalars.len()` and every scalar is below

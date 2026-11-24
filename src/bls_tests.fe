@@ -1,5 +1,5 @@
 use core::MemArray
-use ingot::bls_curve::{Affine, ORDER, Point, g1_generator, g2_generator, msm, multiply_g1, multiply_two, on_g1, on_g2}
+use ingot::bls_curve::{Affine, ORDER, Point, g1_generator, g2_generator, msm, multiply_g1, multiply_g2, multiply_two, on_g1, on_g2}
 use ingot::bls_field::{Field, Fp}
 use ingot::bls_tower::Fp2
 
@@ -118,6 +118,14 @@ const MAX_G2_Y: [[u64; 6]; 2] = [
     [0x0b6277418252ff88, 0x9e46171ef7490737, 0x4e7390b4eaca02d5, 0x10d075f130057e3d, 0xc123ef920f20424e, 0x0a37200b9f3309d4],
     [0xc115fe7903e95e96, 0x516c1ad102430cd7, 0x84434c67e1bd5561, 0x4e40760914934302, 0x2a728d9c10a760f9, 0x170fc445500aeebc],
 ]
+const S_G2_X: [[u64; 6]; 2] = [
+    [0xb409584176ae7c21, 0x691201710d86e269, 0x4285830fa44cb233, 0x48ae4f31b8d32827, 0xd01b7b7222977505, 0x1150ef732ee26ff9],
+    [0x01a1719e4ed38e16, 0x82df951c29f66466, 0xeb60675b330bb3ae, 0xa14c2f8f92a83ddb, 0x9dae2058b0055589, 0x0694b6eab6a10e25],
+]
+const S_G2_Y: [[u64; 6]; 2] = [
+    [0x0849159b9fb1ef3d, 0xc0193b70698aa313, 0x5f356aeed1ce71ef, 0xac120119c2885b88, 0xd433ea36bbe447b2, 0x19424054da6fc640],
+    [0x559351f77673b031, 0xa4b5dd40d8ff9290, 0x7fd4e9c277e311d5, 0x96358f0037e3b5cf, 0xac8364248f792d64, 0x13f16f8dba8fbf6a],
+]
 const S_TWIST_X: [[u64; 6]; 2] = [
     [0x633a8ff354df4ceb, 0xf553732be8965d5e, 0xd2c2d85cf2ef6be6, 0xb55bd51b95a201cf, 0x699cf18abc56c215, 0x194f98aa443d9117],
     [0x5610301694e642a5, 0xe6950c84f6c819bf, 0x010dd7e6f33cdd98, 0xb92efd9bf0d81e8f, 0x84312384bab0bede, 0x095c3dbcc57443ea],
@@ -232,4 +240,28 @@ fn bls_multiplication_matches_known_products() {
     core::assert(has_coordinates(g2_generator().multiply(max), x: fp2(MAX_G2_X), y: fp2(MAX_G2_Y)))
     let twist = g2_point(x: [[1, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0]], y: TWIST_Y)
     core::assert(has_coordinates(twist.multiply(S), x: fp2(S_TWIST_X), y: fp2(S_TWIST_Y)))
+}
+
+#[test]
+fn bls_multiply_g2_matches_double_and_add() {
+    // 21 << 59 is below |x| and its width-5 NAF carries into digit 64; times
+    // powers of |x|, it does so in each base-|x| part of the split, and in
+    // all four at once times 1 + |x| + |x|^2 + |x|^3.
+    let x: u256 = 0xd201000000010000
+    let carry: u256 = 21 << 59
+    let g = g2_generator()
+    for q in [g, g.multiply(S), g.neg(), Point<Fp2>::identity()] {
+        for s in scalars() { core::assert(multiply_g2(q, s).equals(double_and_add(q, s))) }
+        for s in [carry, carry * x, carry * x * x, carry * x * x * x, carry * (1 + x + x * x + x * x * x)] {
+            core::assert(multiply_g2(q, s).equals(double_and_add(q, s)))
+        }
+    }
+}
+
+#[test]
+fn bls_multiply_g2_matches_known_products() {
+    let max: u256 = (0 as u256).wrapping_sub(1)
+    let g = g2_generator()
+    core::assert(has_coordinates(multiply_g2(g, max), x: fp2(MAX_G2_X), y: fp2(MAX_G2_Y)))
+    core::assert(has_coordinates(multiply_g2(g, S), x: fp2(S_G2_X), y: fp2(S_G2_Y)))
 }
