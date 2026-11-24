@@ -247,11 +247,14 @@ fn msm_window(_ k: usize) -> usize {
     best
 }
 
-/// The sum of [scalars[i]] points[i] for scalars below 2^255, by Pippenger's
-/// bucket method over Booth-recoded c-bit digits in [-2^(c-1), 2^(c-1)];
-/// None when the buckets cannot be allocated.
+/// The sum of [scalars[i]] points[i], by Pippenger's bucket method over
+/// Booth-recoded c-bit digits in [-2^(c-1), 2^(c-1)]; None when the buckets
+/// cannot be allocated. Panics unless there is a scalar for each point and
+/// every scalar is below 2^255.
 pub fn msm<F: Field + Copy>(_ points: MemArray<Affine<F>>, _ scalars: MemArray<u256>) -> Option<Point<F>> {
     let k = points.len()
+    core::assert(scalars.len() == k)
+    for i in 0..k { core::assert(scalars[i] >> 255 == 0) }
     let c = msm_window(k)
     if c == 0 {
         var sum = Point::identity()

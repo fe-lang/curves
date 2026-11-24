@@ -11,6 +11,8 @@ const GY: u256 = 0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d
 
 pub struct PublicKey { pub x: u256, pub y: u256 }
 
+impl Copy for PublicKey {}
+
 pub struct Base {}
 
 impl Modulus for Base {
@@ -93,10 +95,11 @@ fn combination(u: u256, v: u256, q: Point<Fp>) -> Point<Fp> {
 }
 
 /// Recover the signer's public key from a 32-byte message hash, a recovery id
-/// (0 or 1: the parity of R's y coordinate) and a signature with 0 < r, s < n.
-/// None when r is not the x coordinate of a curve point or the key is infinity.
+/// (0 or 1: the parity of R's y coordinate) and a signature (r, s). None
+/// unless the recovery id is 0 or 1 and 0 < r, s < n, and when r is not the x
+/// coordinate of a curve point or the key is infinity.
 pub fn recover(hash: u256, recovery_id: u256, r: u256, s: u256) -> Option<PublicKey> {
-    core::assert(recovery_id <= 1 && r != 0 && r < N && s != 0 && s < N)
+    if recovery_id > 1 || r == 0 || r >= N || s == 0 || s >= N { return Option::None }
     let x = Fp::new(r)
     let alpha = x.square().mul(x).add(Fp::new(7))
     // p = 3 (mod 4), so a square root of alpha is alpha^((p + 1) / 4).
@@ -157,4 +160,8 @@ fn secp256k1_recovers_known_signers() {
     ) == 0x2c7536e3605d9c16a7a3d7b1898e529396a65c23)
     // r = 5 is not the x coordinate of a curve point.
     core::assert(recover(hash: 1, recovery_id: 0, r: 5, s: 1).is_none())
+    // A recovery id above 1, and r or s of zero or the group order.
+    core::assert(recover(hash: 1, recovery_id: 2, r: 1, s: 1).is_none())
+    core::assert(recover(hash: 1, recovery_id: 0, r: 0, s: 1).is_none() && recover(hash: 1, recovery_id: 0, r: N, s: 1).is_none())
+    core::assert(recover(hash: 1, recovery_id: 0, r: 1, s: 0).is_none() && recover(hash: 1, recovery_id: 0, r: 1, s: N).is_none())
 }

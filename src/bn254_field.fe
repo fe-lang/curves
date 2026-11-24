@@ -118,6 +118,7 @@ impl Fp6 {
     }
     // The p^k Frobenius for k = 1, 2, 3: v^(p^k) = xi^((p^k - 1)/3) v.
     pub fn frobenius(self, _ k: u64) -> Fp6 {
+        core::assert(k >= 1 && k <= 3)
         let c0 = if k % 2 == 1 { self.c0.conjugate() } else { self.c0 }
         let c1 = if k % 2 == 1 { self.c1.conjugate() } else { self.c1 }
         let c2 = if k % 2 == 1 { self.c2.conjugate() } else { self.c2 }
@@ -168,6 +169,7 @@ impl Fp12 {
     pub fn conjugate(self) -> Fp12 { Fp12 { c0: self.c0, c1: self.c1.neg() } }
     // The p^k Frobenius for k = 1, 2, 3: w^(p^k) = xi^((p^k - 1)/6) w.
     pub fn frobenius(self, _ k: u64) -> Fp12 {
+        core::assert(k >= 1 && k <= 3)
         let w = if k == 1 {
             fp2(0x1284b71c2865a7dfe8b99fdd76e68b605c521e08292f2176d60b35dadcc9e470, 0x246996f3b4fae7e6a6327cfe12150b8e747992778eeec7e5ca5cf05f80f362ac)
         } else if k == 2 {

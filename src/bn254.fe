@@ -25,22 +25,22 @@ fn magnitude(_ word: u256) -> (u256, bool) {
     if word >> 255 == 1 { (zero.wrapping_sub(word), true) } else { (word, false) }
 }
 
-/// [scalar] point for an affine G1 point, by the GLV method: scalar = k1 +
+/// [scalar] (x, y) for a point (x, y) of G1, by the GLV method: scalar = k1 +
 /// k2 lambda mod r with |k1|, |k2| below 2^130, from the lattice basis and
 /// the top half of the scalar (the quotients are off by at most a few, which
-/// the bound allows). One double-and-add over both halves adds point,
+/// the bound allows). One double-and-add over both halves adds (x, y),
 /// (beta x, y) or their precomputed affine sum, each negated with its half.
-pub fn multiply_g1(_ point: Point<Fp>, _ scalar: u256) -> Point<Fp> {
+pub fn multiply_g1(x: Fp, y: Fp, _ scalar: u256) -> Point<Fp> {
     let k = scalar % ORDER
     let high = k >> 128
     let c1 = (high * GLV_G1) >> 128
     let c2 = (high * GLV_G2) >> 128
     let (k1, negative1) = magnitude(k.wrapping_sub(c1 * GLV_A1).wrapping_sub(c2 * GLV_A2))
     let (k2, negative2) = magnitude((c1 * GLV_B1).wrapping_sub(c2 * GLV_B2))
-    let x1 = point.x
-    let y1 = if negative1 { point.y.neg() } else { point.y }
-    let x2 = point.x.mul(fp(BETA))
-    let y2 = if negative2 { point.y.neg() } else { point.y }
+    let x1 = x
+    let y1 = if negative1 { y.neg() } else { y }
+    let x2 = x.mul(fp(BETA))
+    let y2 = if negative2 { y.neg() } else { y }
     let (x3, y3) = Point::affine(x: x1, y: y1).add_affine(x2, y2).to_affine()
     var result = Point::infinity()
     var bit: u64 = (256 - core::num::leading_zeros(k1 | k2)).downcast_truncate()
@@ -56,11 +56,10 @@ pub fn multiply_g1(_ point: Point<Fp>, _ scalar: u256) -> Point<Fp> {
     result
 }
 
-/// Whether a twist point is in G2: pi(Q) = [6x^2] Q (https://eprint.iacr.org/2022/352
+/// Whether the twist point Q = (x, y) is in G2: pi(Q) = [6x^2] Q (https://eprint.iacr.org/2022/352
 /// section 4.3). Frobenius satisfies pi^2 - t pi + p = 0 with t = 6x^2 + 1, so a
 /// passing point has [p - t + 1] Q = [r] Q = O.
-pub fn in_g2(_ q: Point<Fp2>) -> bool {
-    if q.is_infinity() { return true }
-    let (x, y) = frobenius(q.x, q.y)
-    q.multiply(SIX_X_SQUARED).equals(Point::affine(x, y))
+pub fn in_g2(x: Fp2, y: Fp2) -> bool {
+    let (frobenius_x, frobenius_y) = frobenius(x, y)
+    Point::affine(x, y).multiply(SIX_X_SQUARED).equals(Point::affine(x: frobenius_x, y: frobenius_y))
 }

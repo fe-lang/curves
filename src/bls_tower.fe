@@ -43,7 +43,7 @@ impl Fp2 {
 
     /// The square root of `self`, whose c1 is nonzero, from a square root
     /// `alpha` of its norm.
-    pub fn sqrt_from_norm_root(self, _ alpha: Fp) -> Fp2 {
+    pub(ingot) fn sqrt_from_norm_root(self, _ alpha: Fp) -> Fp2 {
         let half = Fp::from_montgomery(HALF)
         // With c1 nonzero, c0 +- alpha is nonzero, and their halves multiply
         // to -(c1 / 2)^2: as -1 is not a square, exactly one is a square.

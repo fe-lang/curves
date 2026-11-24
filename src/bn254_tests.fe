@@ -50,8 +50,8 @@ fn bn254_pairing_is_bilinear_over_g2() {
         1, 5, 0x237844edbccd623aa254f432320c2e7bae38e90e3287cade3214e4a4a041de6b,
         0x031d14917c0ef54369ffd8eaec5cd0e2197651b9e62887359568223266784540,
     ])
-    core::assert(in_g2(generator) && in_g2(thirteen) && in_g2(Point::infinity()))
-    core::assert(on_curve(x: outside.x, y: outside.y, b: twist_b()) && !in_g2(outside))
+    core::assert(in_g2(x: generator.x, y: generator.y) && in_g2(x: thirteen.x, y: thirteen.y))
+    core::assert(on_curve(x: outside.x, y: outside.y, b: twist_b()) && !in_g2(x: outside.x, y: outside.y))
     // e(11 G1, 13 G2) * e(-143 G1, G2) = 1.
     let eleven = Pair {
         px: fp(0x2a14705537b009189da8808651eecdb82482477fe92ac12ca8b71f80fc3d49ef),
@@ -82,7 +82,7 @@ fn bn254_glv_multiplication_matches_double_and_add() {
         for scalar in [1, 2, 3, ORDER - 1, ORDER, ORDER + 5, max, 0xb3c4d79d41a917585bfc41088d8daaa78b17ea66b99c90dd,
                        0x2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f80910, 1 << 200, (1 << 128) + 1] {
             let expected = point.multiply(scalar % ORDER)
-            let actual = multiply_g1(point, scalar)
+            let actual = multiply_g1(x: point.x, y: point.y, scalar)
             core::assert(actual.equals(expected))
         }
     }
