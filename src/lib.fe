@@ -1,0 +1,8 @@
+// Prime fields, elliptic curves and pairings.
+//
+// - `montgomery`: `Mont<M>`, a field of a prime below 2^256 in Montgomery
+//   form, and the carry-chain word operations; `inversion`: safegcd inverses.
+// - `bls_field`, `bls_tower`, `bls_curve`, `bls_map`, `bls_pairing`: BLS12-381.
+// - `kzg`, `kzg_lines`: KZG proof verification for the mainnet trusted setup.
+// - `bn254_field`, `bn254_curve`, `bn254_pairing`, `bn254`: BN254 (alt_bn128).
+// - `secp256k1`: public key recovery. `p256`: ECDSA verification.

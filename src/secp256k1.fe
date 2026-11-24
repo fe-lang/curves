@@ -1,4 +1,5 @@
 use core::Option
+use keccak::Keccak256
 use ingot::bn254_curve::Point
 use ingot::montgomery::{Field, Modulus, Mont}
 
@@ -129,4 +130,31 @@ fn secp256k1_field_arithmetic_edges() {
     core::assert(combination(u: N, v: 0, q: g).is_infinity())
     let (minus_x, minus_y) = combination(u: N - 1, v: 0, q: g).to_affine()
     core::assert(minus_x.value() == GX && minus_y.value() == P - GY)
+}
+
+// The address of the key that signed `hash`: the low 20 bytes of the key's
+// Keccak-256 digest.
+fn signer(hash: u256, recovery_id: u256, r: u256, s: u256) -> u256 {
+    let key = recover(hash, recovery_id, r, s).unwrap()
+    var digest = Keccak256::new()
+    digest.update_word(key.x, len: 32)
+    digest.update_word(key.y, len: 32)
+    digest.finish_word() & 0xffffffffffffffffffffffffffffffffffffffff
+}
+
+#[test]
+fn secp256k1_recovers_known_signers() {
+    // go-ethereum's ecrecover vector (v = 28) and a `cast wallet sign` signature (v = 27).
+    core::assert(signer(
+        hash: 0x456e9aea5e197a1f1af7a3e85a3212fa4049a3ba34c2289b4c860fc0b0c64ef3, recovery_id: 1,
+        r: 0x9242685bf161793cc25603c231bc2f568eb630ea16aa137d2664ac8038825608,
+        s: 0x4f8ae3bd7535248d0bd448298cc2e2071e56992d0774dc340c368ae950852ada,
+    ) == 0x7156526fbd7a3c72969b54f64e42c10fbb768c8a)
+    core::assert(signer(
+        hash: 0x1111111111111111111111111111111111111111111111111111111111111111, recovery_id: 0,
+        r: 0x004375c2180a2a322c6b22b43ca111dadb74ddb0a2f96e427eac82982fd68b4e,
+        s: 0x3dfee5991d071b74211a070b6660783820a15fdd5355fabb31702dac53e62c72,
+    ) == 0x2c7536e3605d9c16a7a3d7b1898e529396a65c23)
+    // r = 5 is not the x coordinate of a curve point.
+    core::assert(recover(hash: 1, recovery_id: 0, r: 5, s: 1).is_none())
 }

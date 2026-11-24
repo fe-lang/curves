@@ -1,10 +1,9 @@
 use core::Option
-use ingot::{FAILURE, Output, SUCCESS, run}
 use ingot::bls_curve::{Affine, ORDER, decompress_g1, g1_generator, g2_generator}
 use ingot::bls_field::{Field, Fp}
 use ingot::bls_pairing::{miller_loop, miller_loop_lines, pairing_product_is_one}
 use ingot::bls_tower::{Fp12, Fp2, Fp6}
-use ingot::kzg::{BLS_MODULUS, decode_kzg_g1}
+use ingot::kzg::{decode_kzg_g1, verify_proof}
 use ingot::kzg_lines::{NEG_G2_LINES, TAU_G2_LINES}
 
 // [tau]G2, monomial G2 point 1 of the mainnet KZG trusted setup: compressed
@@ -135,35 +134,33 @@ fn bls_compressed_g1_points_follow_zcash_encoding() {
     core::assert(decompress_g1(big, offset: 0).is_none())
 }
 
-fn assert_output(_ result: own Output) {
-    core::assert(result.status == SUCCESS && result.gas_used == 50000 && result.output.len() == 64)
+// The big-endian word of `bytes` at `offset`.
+fn word(_ bytes: [u8; 192], offset: usize) -> u256 {
     var value: u256 = 0
-    var modulus: u256 = 0
-    var i: u64 = 0
-    while i < 32 {
-        value = (value << 8) | result.output[i.downcast_truncate()] as u256
-        modulus = (modulus << 8) | result.output[(32 + i).downcast_truncate()] as u256
-        i += 1
-    }
-    core::assert(value == 4096 && modulus == BLS_MODULUS)
+    for i in 0..32 { value = (value << 8) | bytes[offset + i] as u256 }
+    value
+}
+
+// Whether an EIP-4844 point evaluation input (versioned hash, z, y,
+// commitment, proof) decodes and verifies, the versioned hash aside.
+fn verifies(_ input: [u8; 192]) -> bool {
+    let commitment = decode_kzg_g1(input, offset: 96)
+    let proof = decode_kzg_g1(input, offset: 144)
+    commitment.is_some() && proof.is_some()
+        && verify_proof(commitment: commitment.unwrap(), z: word(input, offset: 32), y: word(input, offset: 64),
+                        proof: proof.unwrap())
 }
 
 #[test]
-fn point_evaluation_verifies_c_kzg_vectors() {
+fn verify_proof_matches_c_kzg_vectors() {
     // verify_kzg_proof vectors from the c-kzg-4844 suite, as used by EEST.
-    assert_output(run(address: 10, input: VALID, gas: 60000))
-    assert_output(run(address: 10, input: VALID_INFINITY, gas: 50000))
-    let incorrect = run(address: 10, input: INCORRECT, gas: 60000)
-    core::assert(incorrect.status == FAILURE && incorrect.gas_used == 60000)
-    let short_gas = run(address: 10, input: VALID, gas: 49999)
-    core::assert(short_gas.status == FAILURE)
-    var tampered = VALID
-    tampered[31] ^= 1
-    let hash_mismatch = run(address: 10, input: tampered, gas: 60000)
-    core::assert(hash_mismatch.status == FAILURE)
-    let empty: [u8; 0] = []
-    let wrong_length = run(address: 10, input: empty, gas: 60000)
-    core::assert(wrong_length.status == FAILURE)
+    core::assert(verifies(VALID) && verifies(VALID_INFINITY) && !verifies(INCORRECT))
+    // A changed evaluation fails, as do z and y at the scalar field order.
+    let commitment = decode_kzg_g1(VALID, offset: 96).unwrap()
+    let proof = decode_kzg_g1(VALID, offset: 144).unwrap()
+    let z = word(VALID, offset: 32)
+    core::assert(verify_proof(commitment, z, y: 0, proof) && !verify_proof(commitment, z, y: 1, proof))
+    core::assert(!verify_proof(commitment, z: ORDER, y: 0, proof) && !verify_proof(commitment, z, y: ORDER, proof))
 }
 
 // c-kzg-4844 verify_kzg_proof_case_correct_proof_1ce8e4f69d5df899.

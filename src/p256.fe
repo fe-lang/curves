@@ -144,3 +144,19 @@ fn p256_field_and_group_edges() {
     let z = minus.z.inverse()
     core::assert(minus.x.mul(z.square()).value() == GX && minus.y.mul(z.square().mul(z)).value() == P - GY)
 }
+
+#[test]
+fn p256_verifies_a_known_signature_and_rejects_others() {
+    // Signed by Python's `cryptography` with the SHA-256 digest of "fevm p256verify".
+    let hash = 0xecee5c5ea2fc5190cc080e82f5bf1e49cd7aaa8a3590d255f0163ff9e5756afc
+    let r = 0xbcb24510422611d27b32d883cc1e49c7c699f3291c93aba133e70e70473a7bd7
+    let s = 0x7c7f9023f0bd6745e4b9baeb0c4a80473996dba928440be18659951d75d58c64
+    let x = 0x60fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb6
+    let y = 0x7903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299
+    core::assert(verify(hash, r, s, x, y))
+    // P-256 signatures are malleable: n - s verifies too.
+    core::assert(verify(hash, r, s: N - s, x, y))
+    core::assert(!verify(hash: hash + 1, r, s, x, y) && !verify(hash, r, s, x, y: y + 1))
+    core::assert(!verify(hash, r: 0, s, x, y) && !verify(hash, r: N, s, x, y) && !verify(hash, r, s: N, x, y))
+    core::assert(!verify(hash, r, s, x: P, y) && !verify(hash, r, s, x: 0, y: 0))
+}
