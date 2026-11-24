@@ -13,7 +13,7 @@ handle secrets.
 | `montgomery` | `Mont<M>` (prime field below 2^256 in Montgomery form, chosen by a `Modulus` type), `Field`, and the carry-chain word ops `adc`, `sbb`, `mac`, `mul_wide` |
 | `inversion` | Bernstein-Yang safegcd inverses: `invert`, `invert_256`, `invert_384` |
 | `bls_field`, `bls_tower` | BLS12-381's `Fp` (six 64-bit Montgomery limbs), `Field`, `Fp2`, `Fp6`, `Fp12` |
-| `bls_curve` | `ORDER`, Jacobian `Point<F>` and `Affine<F>` for G1 and G2, `g1_generator`, `g2_generator`, `on_g1`, `on_g2`, `in_subgroup`, `clear_cofactor`, `multiply_two`, `msm`, `decompress_g1` |
+| `bls_curve` | `ORDER`, Jacobian `Point<F>` and `Affine<F>` for G1 and G2, `g1_generator`, `g2_generator`, `on_g1`, `on_g2`, `in_subgroup`, `clear_cofactor`, `multiply_g1`, `multiply_two`, `msm`, `decompress_g1` |
 | `bls_map` | RFC 9380's `map_to_g1` and `map_to_g2` (field element to subgroup point; includes isogeny and cofactor clearing) |
 | `bls_pairing` | `miller_loop`, `miller_loop_lines` for fixed G2 points, `final_exponentiation`, `pairing_product_is_one` |
 | `kzg`, `kzg_lines` | `decode_kzg_g1`, `verify_proof`, and precomputed lines `NEG_G2_LINES`, `TAU_G2_LINES` for the mainnet trusted setup |
@@ -74,8 +74,11 @@ let valid = p256::verify(hash, r, s, x, y)
   `decompress_g1(source, offset:)` validates the 48-byte compressed encoding
   and curve equation (rejecting `x = 0` without the infinity flag), but does not
   check subgroup membership; use `kzg::decode_kzg_g1` to check both (accepting
-  infinity). `multiply_two(a, s, b, t)` requires `a` and `b` in G1 (its
-  endomorphism is invalid off G1) and scalars below `ORDER`. `msm(points, scalars)`
+  infinity). `Point::multiply` and `Affine::multiply` take any point and any
+  scalar. `multiply_g1(point, scalar)` requires `point` in G1 (its
+  endomorphism is invalid off G1) and reduces `scalar` modulo `ORDER`.
+  `multiply_two(a, s, b, t)` requires `a` and `b` in G1 and scalars below
+  `ORDER`. `msm(points, scalars)`
   panics unless `points.len() == scalars.len()` and every scalar is below
   2^255 (reduce modulo `ORDER`), and returns `Option::None` if bucket
   allocation fails. `miller_loop` and `miller_loop_lines` take two pairs and ignore any

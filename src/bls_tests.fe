@@ -1,5 +1,5 @@
 use core::MemArray
-use ingot::bls_curve::{Affine, ORDER, Point, g1_generator, g2_generator, msm, multiply_two, on_g1, on_g2}
+use ingot::bls_curve::{Affine, ORDER, Point, g1_generator, g2_generator, msm, multiply_g1, multiply_two, on_g1, on_g2}
 use ingot::bls_field::{Field, Fp}
 use ingot::bls_tower::Fp2
 
@@ -69,9 +69,167 @@ fn bls_multiply_two_matches_separate_multiplications() {
     let a = g.multiply(0x1234567890abcdef).to_affine()
     let b = g.double().add(g).to_affine()
     let large = ORDER - 1
-    for (p, q) in [(a, b), (a, Affine<Fp>::identity()), (b, b.neg()), (a, a)] {
-        for (s, t) in [(0, 0), (1, 0), (0, 1), (large, large), (large - 0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a, 0xd201000000010000 * 0xd201000000010000 + 7)] {
+    // 21 << 123 is below x^2 and its width-5 NAF ends in a carry into digit
+    // 128, so it tests that digit in either half of the split.
+    let carry: u256 = 21 << 123
+    let x_squared: u256 = 0xd201000000010000 * 0xd201000000010000
+    let identity = Affine<Fp>::identity()
+    for (p, q) in [(a, b), (a, identity), (identity, b), (identity, identity), (b, b.neg()), (a, a)] {
+        for (s, t) in [
+            (0, 0), (1, 0), (0, 1), (large, large), (large - 0x5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a, x_squared + 7),
+            (carry, carry * x_squared), (carry * x_squared, carry),
+        ] {
             core::assert(multiply_two(p, s, q, t).equals(p.multiply(s).add(q.multiply(t))))
         }
     }
+}
+
+// Points off the subgroups, canonical: (4, P4_Y) on G1's curve, of order a
+// multiple of r; a point of order 11 there; (1 + u, TWIST_Y) on G2's twist;
+// and a point of order 13 there. Products of them and of the generators
+// from Python big integers: by 2^256 - 1 (MAX) and by S.
+const P4_Y: [u64; 6] = [0x5ea93e354abe706c, 0x6346b8ed00e1de5d, 0xda9dd85e92848344, 0xc760f988c9926b26, 0xb33cffc3f3763e9b, 0x0a989badd40d6212]
+const ORDER_11_X: [u64; 6] = [0xcc71cdf03229b1ef, 0x735318617f625954, 0x4f251a12908c9b7f, 0xd29200c28624ac60, 0x3c326b531fc1e639, 0x19b3e2c8c6bbf59d]
+const ORDER_11_Y: [u64; 6] = [0x122b795529939e03, 0x3c7c5771a05d217a, 0xcf16ccfbcbfc6940, 0xade01df410168a09, 0x0f11a69ecd34f5a8, 0x15d1455562b9a28d]
+const TWIST_Y: [[u64; 6]; 2] = [
+    [0x3c3a315aa7de14ca, 0x9fce4e8ea2d9d28e, 0x773abc1eef6d193b, 0x9f2a5b83388e4b10, 0x270b858dad946208, 0x17faa6201231304f],
+    [0x6569345eb41ed76e, 0xa1a534757df374dd, 0xad397c1837a90f0e, 0xc4fb4c39325d3164, 0x7f367e7242250427, 0x00cc12449be6ac4e],
+]
+const ORDER_13_X: [[u64; 6]; 2] = [
+    [0x56905843518bc0c2, 0x6bae16f9f2763ab5, 0x34d320e323d9fcc7, 0xffeef5b14a3e2468, 0x8340a1a548d700c5, 0x043ff79d06a80add],
+    [0xee69a68b7d4704a4, 0x278c22ea15e6d03c, 0x0a23c05406588284, 0x09b25206fa89dded, 0x7d4ebc6409c2fdae, 0x032762e5199990da],
+]
+const ORDER_13_Y: [[u64; 6]; 2] = [
+    [0x4501e53fabc600f3, 0x67961c8d7bcc69b9, 0xb6502cc324ab0479, 0x0f05b83418b3d3b6, 0x916f6195da10e94d, 0x07b8eb3b0d94f08c],
+    [0x7eb47d01649f4c1e, 0x0a516e85dc3f7497, 0x1192186219d8d38a, 0xfefcf24fd6b08089, 0x02d3dda394c1dd5f, 0x082b2fb28bdddaf7],
+]
+const S: u256 = 0x5a3c1f0e2d4b69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0
+const MAX_G1_X: [u64; 6] = [0xa4f0564050d31746, 0x0ada1a51bc7a4006, 0x627c30c34252679a, 0x4c1df37194d30803, 0x89479129b258960b, 0x16ea601ca88f7d34]
+const MAX_G1_Y: [u64; 6] = [0xc8f2655fad5e2013, 0x10fba8f436aec3a3, 0xca518d1bedb573e3, 0xd2aa8e0c4a1ffbe9, 0xf27bf38f950b2af8, 0x039e394a6f95c4a2]
+const S_G1_X: [u64; 6] = [0x73d1c1879451d491, 0xdb47cba30484cc68, 0x8a688a56fc085514, 0x583a25cce07bf919, 0xfd3a001e36831ace, 0x05844e87c85eea73]
+const S_G1_Y: [u64; 6] = [0xfea7ffcdc4c119dc, 0x09d6cbe95230459e, 0x9b8fa3c0b7898e21, 0xf4e0a88062a205d0, 0xf2b32f7870a7d268, 0x0c2b4494357f0495]
+const MAX_P4_X: [u64; 6] = [0xf2227b653813cb65, 0x6a1eb8e74c85fe01, 0x524954c911e9b5a1, 0x6d52e9dc3bf87ded, 0x67dae9736ea0f74e, 0x01162780d4319fed]
+const MAX_P4_Y: [u64; 6] = [0xbed5440cfff386f9, 0x5ac03b7bb987ca83, 0xaac5c55f73611759, 0x19bd12559aff18e8, 0x4fa0485464f07a81, 0x0c82de2e1459ae1f]
+const MAX_G2_X: [[u64; 6]; 2] = [
+    [0x51c59d71cb8ffcff, 0x1448500d2f103b6b, 0x915a6b3173986be4, 0x47bf7b6a8ca3bc54, 0xf2780a07ca06db91, 0x1894914549a2c52c],
+    [0x9a944887974cfda2, 0x93ad1b41289bea4a, 0xdda90bdc1b5a34bf, 0xf3462b162204f785, 0xeb614cb59dadb177, 0x103fce7f3245b093],
+]
+const MAX_G2_Y: [[u64; 6]; 2] = [
+    [0x0b6277418252ff88, 0x9e46171ef7490737, 0x4e7390b4eaca02d5, 0x10d075f130057e3d, 0xc123ef920f20424e, 0x0a37200b9f3309d4],
+    [0xc115fe7903e95e96, 0x516c1ad102430cd7, 0x84434c67e1bd5561, 0x4e40760914934302, 0x2a728d9c10a760f9, 0x170fc445500aeebc],
+]
+const S_TWIST_X: [[u64; 6]; 2] = [
+    [0x633a8ff354df4ceb, 0xf553732be8965d5e, 0xd2c2d85cf2ef6be6, 0xb55bd51b95a201cf, 0x699cf18abc56c215, 0x194f98aa443d9117],
+    [0x5610301694e642a5, 0xe6950c84f6c819bf, 0x010dd7e6f33cdd98, 0xb92efd9bf0d81e8f, 0x84312384bab0bede, 0x095c3dbcc57443ea],
+]
+const S_TWIST_Y: [[u64; 6]; 2] = [
+    [0x795c85e31fca7934, 0x5a4a9acc1bd0f488, 0x0d1b61fc6eaca3db, 0xbdbd9e782591c0eb, 0xf61fd138d85bdd84, 0x0eb01288cf7390b7],
+    [0x2f3946292223ec9c, 0x6a60dfe590c03d2b, 0xc7d62018fb4e9a36, 0x7f0725b023ff8c0f, 0x955d6f4338846943, 0x160a591fe6f72a03],
+]
+
+fn g1_point(x: [u64; 6], y: [u64; 6]) -> Point<Fp> {
+    Point::from_affine(Affine { x: Fp::from_canonical(x), y: Fp::from_canonical(y), infinity: false })
+}
+
+fn fp2(_ limbs: [[u64; 6]; 2]) -> Fp2 { Fp2::new(c0: Fp::from_canonical(limbs[0]), c1: Fp::from_canonical(limbs[1])) }
+
+fn g2_point(x: [[u64; 6]; 2], y: [[u64; 6]; 2]) -> Point<Fp2> {
+    Point::from_affine(Affine { x: fp2(x), y: fp2(y), infinity: false })
+}
+
+// Whether p is the finite point (x, y).
+fn has_coordinates<F: Field + Copy>(_ p: Point<F>, x: F, y: F) -> bool {
+    let affine = p.to_affine()
+    !affine.infinity && affine.x.equals(x) && affine.y.equals(y)
+}
+
+// The double-and-add product, the reference for the windowed and
+// endomorphism methods.
+fn double_and_add<F: Field + Copy>(_ p: Point<F>, _ scalar: u256) -> Point<F> {
+    var result = Point<F>::identity()
+    var bit: u64 = (256 - core::num::leading_zeros(scalar)).downcast_truncate()
+    while bit > 0 {
+        bit -= 1
+        result = result.double()
+        if (scalar >> bit as u256) & 1 == 1 { result = result.add(p) }
+    }
+    result
+}
+
+// Zero and one, either side of 2^64, around the powers of |x| where the
+// endomorphism splits carry, around ORDER, the largest scalars below 2^255
+// and 2^256, 2^256 - 15 and 0xc210...4211, whose width-5 NAF is 51 digits
+// -15 carrying into digit 256, and pseudo-random ones of 256, 192 and 128
+// bits.
+fn scalars() -> [u256; 26] {
+    let max: u256 = (0 as u256).wrapping_sub(1)
+    let x: u256 = 0xd201000000010000
+    var scalars: [u256; 26] = [
+        0, 1, 2, 3, (1 << 64) - 1, 1 << 64, (1 << 64) + 1, x - 1, x, x * x - 1, x * x, x * x * x - 1, x * x * x,
+        x * x * x * x - 1, ORDER - 1, ORDER, ORDER + 1, (1 << 255) - 1, max, max - 14,
+        0xc210842108421084210842108421084210842108421084210842108421084211, 0, 0, 0, 0, 0,
+    ]
+    var seed: u256 = 0x243f6a8885a308d313198a2e03707344a4093822299f31d0082efa98ec4e6c89
+    for i in 21..26 {
+        seed = seed.wrapping_mul(0x5851f42d4c957f2d14057b7ef767814f).wrapping_add(0x9e3779b97f4a7c15)
+        scalars[i] = seed >> (i % 3 * 64) as u256
+    }
+    scalars
+}
+
+#[test]
+fn bls_windowed_multiplication_matches_double_and_add() {
+    let g1 = g1_generator()
+    let p4 = g1_point(x: [4, 0, 0, 0, 0, 0], y: P4_Y)
+    // (0, 2) has order 3.
+    let order_3 = g1_point(x: [0, 0, 0, 0, 0, 0], y: [2, 0, 0, 0, 0, 0])
+    let order_11 = g1_point(x: ORDER_11_X, y: ORDER_11_Y)
+    core::assert(on_g1(x: p4.x, y: p4.y) && on_g1(x: order_11.x, y: order_11.y))
+    core::assert(double_and_add(order_3, 3).is_identity() && double_and_add(order_11, 11).is_identity())
+    for p in [g1, g1.multiply(S), Point<Fp>::identity(), p4, p4.add(g1), order_3, order_11, order_11.add(order_3)] {
+        for s in scalars() {
+            let expected = double_and_add(p, s)
+            core::assert(p.multiply(s).equals(expected) && p.to_affine().multiply(s).equals(expected))
+        }
+    }
+    let g2 = g2_generator()
+    let twist = g2_point(x: [[1, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0]], y: TWIST_Y)
+    let order_13 = g2_point(x: ORDER_13_X, y: ORDER_13_Y)
+    core::assert(on_g2(x: twist.x, y: twist.y) && on_g2(x: order_13.x, y: order_13.y) && double_and_add(order_13, 13).is_identity())
+    for q in [g2, g2.multiply(S), Point<Fp2>::identity(), twist, order_13] {
+        for s in scalars() {
+            let expected = double_and_add(q, s)
+            core::assert(q.multiply(s).equals(expected) && q.to_affine().multiply(s).equals(expected))
+        }
+    }
+}
+
+#[test]
+fn bls_multiply_g1_matches_double_and_add() {
+    let g = g1_generator()
+    // Width-5 NAFs of k0 and of k1 that carry into digit 128 (see
+    // `bls_multiply_two_matches_separate_multiplications`).
+    let carry: u256 = 21 << 123
+    let x_squared: u256 = 0xd201000000010000 * 0xd201000000010000
+    for p in [g, g.multiply(S), g.neg(), Point<Fp>::identity()] {
+        for s in scalars() { core::assert(multiply_g1(p, s).equals(double_and_add(p, s))) }
+        for s in [carry, carry * x_squared, carry * x_squared + carry] {
+            core::assert(multiply_g1(p, s).equals(double_and_add(p, s)))
+        }
+    }
+}
+
+#[test]
+fn bls_multiplication_matches_known_products() {
+    let max: u256 = (0 as u256).wrapping_sub(1)
+    let g1 = g1_generator()
+    core::assert(has_coordinates(g1.multiply(max), x: Fp::from_canonical(MAX_G1_X), y: Fp::from_canonical(MAX_G1_Y)))
+    core::assert(has_coordinates(multiply_g1(g1, max), x: Fp::from_canonical(MAX_G1_X), y: Fp::from_canonical(MAX_G1_Y)))
+    core::assert(has_coordinates(g1.multiply(S), x: Fp::from_canonical(S_G1_X), y: Fp::from_canonical(S_G1_Y)))
+    core::assert(has_coordinates(multiply_g1(g1, S), x: Fp::from_canonical(S_G1_X), y: Fp::from_canonical(S_G1_Y)))
+    let p4 = g1_point(x: [4, 0, 0, 0, 0, 0], y: P4_Y)
+    core::assert(has_coordinates(p4.multiply(max), x: Fp::from_canonical(MAX_P4_X), y: Fp::from_canonical(MAX_P4_Y)))
+    core::assert(has_coordinates(g2_generator().multiply(max), x: fp2(MAX_G2_X), y: fp2(MAX_G2_Y)))
+    let twist = g2_point(x: [[1, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0]], y: TWIST_Y)
+    core::assert(has_coordinates(twist.multiply(S), x: fp2(S_TWIST_X), y: fp2(S_TWIST_Y)))
 }
