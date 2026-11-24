@@ -110,7 +110,11 @@ impl<F> Point<F> where F: Field + Copy {
         Point { x, y, z: self.z.add(h).square().sub(z1z1).sub(hh) }
     }
 
+    /// The product with a scalar: from 2^64, by the scalar's width-5 NAF over
+    /// the affine odd multiples of the point, with mixed additions; below,
+    /// where that table costs more than it saves, by double-and-add.
     pub fn multiply(self, _ scalar: u256) -> Point<F> {
+        if scalar >> 64 != 0 { return sum_wnaf([odd_multiples(self)], [wnaf(scalar)]) }
         var result = Point::identity()
         var bit: u64 = (256 - core::num::leading_zeros(scalar)).downcast_truncate()
         while bit > 0 {
@@ -153,8 +157,10 @@ impl<F> Affine<F> where F: Field + Copy {
     pub fn identity() -> Affine<F> { Affine { x: F::zero(), y: F::zero(), infinity: true } }
     pub fn neg(self) -> Affine<F> { Affine { x: self.x, y: self.y.neg(), infinity: self.infinity } }
 
-    /// The product with a scalar, by double-and-add with mixed additions.
+    /// The product with a scalar: from 2^64 as `Point::multiply`, and below by
+    /// double-and-add with mixed additions.
     pub fn multiply(self, _ scalar: u256) -> Point<F> {
+        if scalar >> 64 != 0 { return Point::from_affine(self).multiply(scalar) }
         var result = Point::identity()
         var bit: u64 = (256 - core::num::leading_zeros(scalar)).downcast_truncate()
         while bit > 0 {
@@ -166,52 +172,101 @@ impl<F> Affine<F> where F: Field + Copy {
     }
 }
 
-// x^2 for the BLS parameter x; [x^2] (x, y) = (beta x, -y) on G1.
-const X_SQUARED: u256 = 0xac45a4010001a4020000000100000000
-
-/// [s] a + [t] b for points of G1 and scalars below r. Each scalar splits as
-/// k0 + k1 x^2 with both parts below 2^128, and [x^2] P = (beta x, -y) (see
-/// `in_subgroup`), so one double-and-add over 128 bits sums the four
-/// products, adding the precomputed sum of the points whose bit is set.
-pub fn multiply_two(_ a: Affine<Fp>, _ s: u256, _ b: Affine<Fp>, _ t: u256) -> Point<Fp> {
-    let scalars = [s % X_SQUARED, s / X_SQUARED, t % X_SQUARED, t / X_SQUARED]
-    let beta = Fp::from_montgomery(BETA)
-    let points = [
-        a, Affine { x: a.x.mul(beta), y: a.y.neg(), infinity: a.infinity },
-        b, Affine { x: b.x.mul(beta), y: b.y.neg(), infinity: b.infinity },
-    ]
-    // The sum of each subset of the points, indexed by its bits.
-    var sums: [Point<Fp>; 16] = [Point::identity(); 16]
-    for i in 0..4 {
-        let size: usize = 1 << i
-        for m in 0..size { sums[m + size] = sums[m].add_affine(points[i]) }
+// The width-5 NAF of a scalar: digits[i] in {0, +-1, +-3, ..., +-15}, at most
+// one nonzero in any five in a row, with the sum of digits[i] 2^i the scalar.
+fn wnaf(_ scalar: u256) -> [i8; 257] {
+    var digits: [i8; 257] = [0; 257]
+    var k = scalar
+    var i: usize = 0
+    while k != 0 {
+        let zeros = core::num::trailing_zeros(k)
+        k >>= zeros
+        i += zeros.downcast_truncate()
+        // k's odd residue modulo 32 in (-16, 16). (k - digit) / 32 is k >> 5,
+        // plus one when the digit is negative: no intermediate k + 15.
+        let low: i8 = (k & 31).downcast_truncate()
+        let digit = if low > 15 { low - 32 } else { low }
+        digits[i] = digit
+        k = (k >> 5) + if digit < 0 { 1 } else { 0 }
+        i += 5
     }
-    let table = to_affine_all(sums)
+    digits
+}
+
+// [1] p, [3] p, ..., [15] p, affine: the multiples width-5 NAF digits take.
+fn odd_multiples<F: Field + Copy>(_ p: Point<F>) -> [Affine<F>; 8] {
+    let twice = p.double()
+    var multiples: [Point<F>; 8] = [p; 8]
+    for i in 1..8 { multiples[i] = multiples[i - 1].add(twice) }
+    to_affine_all(multiples)
+}
+
+// The sum over j of [digits[j]] p_j, for the width-5 NAFs of N scalars and
+// the odd multiples of their points: one doubling per digit position, shared.
+fn sum_wnaf<F: Field + Copy, const N: usize>(_ tables: [[Affine<F>; 8]; N], _ digits: [[i8; 257]; N]) -> Point<F> {
     var result = Point::identity()
-    var bit: u64 = (256 - core::num::leading_zeros(scalars[0] | scalars[1] | scalars[2] | scalars[3])).downcast_truncate()
-    while bit > 0 {
-        bit -= 1
-        result = result.double()
-        let index: usize = ((scalars[0] >> bit as u256) & 1 | ((scalars[1] >> bit as u256) & 1) << 1
-            | ((scalars[2] >> bit as u256) & 1) << 2 | ((scalars[3] >> bit as u256) & 1) << 3).downcast_truncate()
-        if index != 0 { result = result.add_affine(table[index]) }
+    var i: usize = 257
+    while i > 0 {
+        i -= 1
+        result.double_assign()
+        for j in 0..N {
+            let digit = digits[j][i]
+            if digit != 0 {
+                let multiple = tables[j][(digit.unsigned_abs() >> 1) as usize]
+                result = result.add_affine(if digit > 0 { multiple } else { multiple.neg() })
+            }
+        }
     }
     result
 }
 
-// The affine forms of 16 points, with one inversion (Montgomery's trick):
+// x^2 for the BLS parameter x; [x^2] (x, y) = (beta x, -y) on G1.
+const X_SQUARED: u256 = 0xac45a4010001a4020000000100000000
+
+// (beta x, -y) for each point: an endomorphism, so it maps odd multiples of
+// p to those of its image, which is [x^2] p on G1.
+fn endomorphism(_ table: [Affine<Fp>; 8]) -> [Affine<Fp>; 8] {
+    let beta = Fp::from_montgomery(BETA)
+    var image = table
+    for i in 0..8 { image[i] = Affine { x: table[i].x.mul(beta), y: table[i].y.neg(), infinity: table[i].infinity } }
+    image
+}
+
+/// [scalar] point for a point of G1, by the GLV method with blst's split
+/// (POINTonE1_mult_glv): scalar mod r is k0 + k1 x^2 with both parts below
+/// 2^128, and [x^2] P = (beta x, -y) (see `in_subgroup`), so the width-5 NAFs
+/// of k0 and k1 share 128 doublings. Off G1, [x^2] P differs and so does
+/// the result.
+pub fn multiply_g1(_ point: Point<Fp>, _ scalar: u256) -> Point<Fp> {
+    let k = scalar % ORDER
+    let table = odd_multiples(point)
+    sum_wnaf([table, endomorphism(table)], [wnaf(k % X_SQUARED), wnaf(k / X_SQUARED)])
+}
+
+/// [s] a + [t] b for points of G1 and scalars below r, as `multiply_g1`
+/// splits each: the width-5 NAFs of the four halves share 128 doublings.
+pub fn multiply_two(_ a: Affine<Fp>, _ s: u256, _ b: Affine<Fp>, _ t: u256) -> Point<Fp> {
+    let a_table = odd_multiples(Point::from_affine(a))
+    let b_table = odd_multiples(Point::from_affine(b))
+    sum_wnaf(
+        [a_table, endomorphism(a_table), b_table, endomorphism(b_table)],
+        [wnaf(s % X_SQUARED), wnaf(s / X_SQUARED), wnaf(t % X_SQUARED), wnaf(t / X_SQUARED)],
+    )
+}
+
+// The affine forms of N points, with one inversion (Montgomery's trick):
 // the product of the nonzero z, inverted, gives each one's inverse by
 // multiplying out the others.
-fn to_affine_all(_ points: [Point<Fp>; 16]) -> [Affine<Fp>; 16] {
-    var prefix: [Fp; 16] = [Fp::one(); 16]
-    var product = Fp::one()
-    for i in 0..16 {
+fn to_affine_all<F: Field + Copy, const N: usize>(_ points: [Point<F>; N]) -> [Affine<F>; N] {
+    var prefix: [F; N] = [F::one(); N]
+    var product = F::one()
+    for i in 0..N {
         if !points[i].is_identity() { product = product.mul(points[i].z) }
         prefix[i] = product
     }
     var inverse = product.invert()
-    var affine: [Affine<Fp>; 16] = [Affine::identity(); 16]
-    var i: usize = 16
+    var affine: [Affine<F>; N] = [Affine::identity(); N]
+    var i: usize = N
     while i > 0 {
         i -= 1
         let point = points[i]
