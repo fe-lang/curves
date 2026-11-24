@@ -387,6 +387,35 @@ impl Point<Fp2> {
     }
 }
 
+// -psi for each point: an endomorphism, so it maps odd multiples of q to
+// those of its image, which is [|x|] q on G2.
+fn minus_psi(_ table: [Affine<Fp2>; 8]) -> [Affine<Fp2>; 8] {
+    var image = table
+    for i in 0..8 {
+        let q = Point { x: table[i].x, y: table[i].y, z: Fp2::one() }.psi().neg()
+        image[i] = Affine { x: q.x, y: q.y, infinity: table[i].infinity }
+    }
+    image
+}
+
+/// [scalar] point for a point of G2, by the GLS method with blst's split
+/// (POINTonE2_mult_gls): scalar mod r is below |x|^4, so it is k0 + k1 |x| +
+/// k2 |x|^2 + k3 |x|^3 with each part below 2^64, and [|x|] Q = -psi(Q) (see
+/// `in_subgroup`), so the width-5 NAFs of the four parts share 64
+/// doublings. Off G2, [|x|] Q differs and so does the result.
+pub fn multiply_g2(_ point: Point<Fp2>, _ scalar: u256) -> Point<Fp2> {
+    let k = scalar % ORDER
+    let x = X_ABS as u256
+    // The odd multiples of [|x|^i] point.
+    let t0 = odd_multiples(point)
+    let t1 = minus_psi(t0)
+    let t2 = minus_psi(t1)
+    sum_wnaf(
+        [t0, t1, t2, minus_psi(t2)],
+        [wnaf(k % x), wnaf(k / x % x), wnaf(k / (x * x) % x), wnaf(k / (x * x * x))],
+    )
+}
+
 /// Whether affine (x, y) is on G1's curve y^2 = x^3 + 4.
 pub fn on_g1(x: Fp, y: Fp) -> bool { y.square().equals(x.square().mul(x).add(Fp::from_montgomery(B_G1))) }
 
