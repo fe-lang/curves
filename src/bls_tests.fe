@@ -53,11 +53,11 @@ fn msm_and_expected<F: Field + Copy>(_ generator: Point<F>, k: usize) -> (Point<
 #[test]
 fn bls_msm_matches_separate_multiplications() {
     // Below and above the size where Pippenger's method takes over.
-    for k in [3 as usize, 9, 40] {
+    for k in [1 as usize, 2, 3, 40] {
         let (sum, expected) = msm_and_expected(g1_generator(), k)
         core::assert(sum.equals(expected))
     }
-    for k in [3 as usize, 12] {
+    for k in [1 as usize, 2, 3, 12] {
         let (sum, expected) = msm_and_expected(g2_generator(), k)
         core::assert(sum.equals(expected))
     }
@@ -152,7 +152,7 @@ fn has_coordinates<F: Field + Copy>(_ p: Point<F>, x: F, y: F) -> bool {
 }
 
 // The double-and-add product, the reference for the windowed and
-// endomorphism methods.
+// endomorphism methods and for `msm`.
 fn double_and_add<F: Field + Copy>(_ p: Point<F>, _ scalar: u256) -> Point<F> {
     var result = Point<F>::identity()
     var bit: u64 = (256 - core::num::leading_zeros(scalar)).downcast_truncate()
@@ -264,4 +264,92 @@ fn bls_multiply_g2_matches_known_products() {
     let g = g2_generator()
     core::assert(has_coordinates(multiply_g2(g, max), x: fp2(MAX_G2_X), y: fp2(MAX_G2_Y)))
     core::assert(has_coordinates(multiply_g2(g, S), x: fp2(S_G2_X), y: fp2(S_G2_Y)))
+}
+
+#[test]
+fn bls_msm_buckets_take_equal_opposite_and_small_order_points() {
+    // With one scalar, a point and its negation cancel in their buckets, and
+    // the point twice doubles there; (0, 2) has order 3, so the running sums
+    // of its buckets meet equal and opposite sums too.
+    let g = g1_generator().multiply(0x1234567890abcdef)
+    let order_3 = g1_point(x: [0, 0, 0, 0, 0, 0], y: [2, 0, 0, 0, 0, 0])
+    let s: u256 = 0x5a3c1f0e2d4b69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0
+    let points = [g, g.neg(), g, g, order_3, order_3, order_3.neg(), g.add(order_3), Point<Fp>::identity()]
+    let scalars: [u256; 9] = [s, s, s, s, s, s, s ^ 0xff, 3, s]
+    for k in [2 as usize, 4, 9] {
+        var affine = MemArray::try_from_fn(k, |_| Affine<Fp>::identity()).unwrap()
+        var taken = MemArray<u256>::try_new_zeroed(k).unwrap()
+        var expected = Point<Fp>::identity()
+        for i in 0..k {
+            affine[i] = points[i].to_affine()
+            taken[i] = scalars[i]
+            expected = expected.add(double_and_add(points[i], scalars[i]))
+        }
+        core::assert(msm(affine, taken).unwrap().equals(expected))
+    }
+}
+
+// `msm` over the points and scalars, and the sum of their double-and-add
+// products.
+fn msm_and_sum<F: Field + Copy, const N: usize>(_ points: [Point<F>; N], _ scalars: [u256; N]) -> (Point<F>, Point<F>) {
+    var affine = MemArray::try_from_fn(N, |_| Affine<F>::identity()).unwrap()
+    var taken = MemArray<u256>::try_new_zeroed(N).unwrap()
+    var sum = Point<F>::identity()
+    for i in 0..N {
+        affine[i] = points[i].to_affine()
+        taken[i] = scalars[i]
+        sum = sum.add(double_and_add(points[i], scalars[i]))
+    }
+    (msm(affine, taken).unwrap(), sum)
+}
+
+fn msm_matches<F: Field + Copy, const N: usize>(_ points: [Point<F>; N], _ scalars: [u256; N]) -> bool {
+    let (result, sum) = msm_and_sum(points, scalars)
+    result.equals(sum)
+}
+
+#[test]
+fn bls_msm_buckets_meet_equal_and_opposite_sums() {
+    // Three or four points take 2-bit windows, digits +-1 in bucket 0 and
+    // +-2 in bucket 1. With one scalar, q and q double in their bucket, which
+    // then meets [2] q or [-2] q with zz != 1. With scalar 2, q and q put
+    // [-2] q in bucket 1 of the lowest window, and [-2] q or [2] q with
+    // scalar 1 goes to bucket 0, so the running sum doubles or cancels there.
+    let g = g1_generator().multiply(0x1234567890abcdef)
+    let order_3 = g1_point(x: [0, 0, 0, 0, 0, 0], y: [2, 0, 0, 0, 0, 0])
+    let order_11 = g1_point(x: ORDER_11_X, y: ORDER_11_Y)
+    for q in [g, order_11] {
+        core::assert(msm_matches([q, q, q.double()], [S, S, S]) && msm_matches([q, q, q.double().neg()], [S, S, S]))
+        core::assert(msm_matches([q, q, q.double().neg()], [2, 2, 1]) && msm_matches([q, q, q.double()], [2, 2, 1]))
+    }
+    // Small orders in adjacent buckets, whose sums repeat.
+    core::assert(msm_matches([order_3, order_3, order_11, order_11.neg()], [1, 2, 1, 2]))
+    core::assert(msm_matches([order_3, order_3.neg(), order_3, g.add(order_3)], [1, 2, 3, S]))
+    // The same on G2's twist, off G2, and with a point of order 13.
+    let twist = g2_point(x: [[1, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0]], y: TWIST_Y)
+    let order_13 = g2_point(x: ORDER_13_X, y: ORDER_13_Y)
+    for q in [twist, order_13] {
+        core::assert(msm_matches([q, q, q.double()], [S, S, S]) && msm_matches([q, q, q.double().neg()], [S, S, S]))
+        core::assert(msm_matches([q, q, q.double().neg()], [2, 2, 1]) && msm_matches([q, q, q.double()], [2, 2, 1]))
+    }
+    core::assert(msm_matches([order_13, order_13.neg(), twist, twist.add(order_13)], [1, 2, 3, S]))
+}
+
+#[test]
+fn bls_msm_takes_scalars_above_the_order_off_the_subgroups() {
+    // Off G1 and G2, scalars from ORDER to 2^255 - 1 are not reduced: the sum
+    // differs from that of the scalars modulo ORDER.
+    let large: u256 = (1 << 255) - 1
+    let p4 = g1_point(x: [4, 0, 0, 0, 0, 0], y: P4_Y)
+    let scalars: [u256; 3] = [large, ORDER + 5, ORDER]
+    let (result, sum) = msm_and_sum([p4, p4.double().neg(), g1_generator()], scalars)
+    let (_, reduced) = msm_and_sum([p4, p4.double().neg(), g1_generator()], [large % ORDER, 5, 0])
+    core::assert(result.equals(sum) && !result.equals(reduced))
+    let twist = g2_point(x: [[1, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0]], y: TWIST_Y)
+    let (result, sum) = msm_and_sum([twist, twist.double().neg(), g2_generator()], scalars)
+    let (_, reduced) = msm_and_sum([twist, twist.double().neg(), g2_generator()], [large % ORDER, 5, 0])
+    core::assert(result.equals(sum) && !result.equals(reduced))
+    // No points: the identity.
+    let none = MemArray::try_from_fn(0, |_| Affine<Fp>::identity()).unwrap()
+    core::assert(msm(none, MemArray<u256>::try_new_zeroed(0).unwrap()).unwrap().is_identity())
 }
