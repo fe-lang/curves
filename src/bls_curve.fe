@@ -283,16 +283,92 @@ fn to_affine_all<F: Field + Copy, const N: usize>(_ points: [Point<F>; N]) -> [A
     affine
 }
 
+// A point in XYZZ coordinates (x/zz, y/zzz), zz^3 = zzz^2; zz = 0 is
+// infinity (https://hyperelliptic.org/EFD/g1p/auto-shortw-xyzz.html). Its
+// mixed addition takes 8M + 2S and its addition 12M + 2S, against 7M + 4S
+// and 11M + 5S in Jacobian coordinates, so Pippenger's buckets keep it.
+struct Xyzz<F> { x: F, y: F, zz: F, zzz: F }
+
+impl<F> Copy for Xyzz<F> where F: Copy {}
+
+impl<F> Xyzz<F> where F: Field + Copy {
+    fn identity() -> Xyzz<F> { Xyzz { x: F::one(), y: F::one(), zz: F::zero(), zzz: F::zero() } }
+    fn is_identity(self) -> bool { self.zz.is_zero() }
+
+    // dbl-2008-s-1 for a = 0.
+    fn double(self) -> Xyzz<F> {
+        let u = self.y.double()
+        let v = u.square()
+        let w = u.mul(v)
+        let s = self.x.mul(v)
+        let squared = self.x.square()
+        let m = squared.double().add(squared)
+        let x = m.square().sub(s.double())
+        Xyzz { x, y: m.mul(s.sub(x)).sub(w.mul(self.y)), zz: v.mul(self.zz), zzz: w.mul(self.zzz) }
+    }
+
+    // madd-2008-s, with the doubling and inverse cases.
+    fn add_affine(self, _ other: Affine<F>) -> Xyzz<F> {
+        if other.infinity { return self }
+        let point = Xyzz { x: other.x, y: other.y, zz: F::one(), zzz: F::one() }
+        if self.is_identity() { return point }
+        let p = other.x.mul(self.zz).sub(self.x)
+        let r = other.y.mul(self.zzz).sub(self.y)
+        if p.is_zero() {
+            return if r.is_zero() { point.double() } else { Xyzz::identity() }
+        }
+        let pp = p.square()
+        let ppp = p.mul(pp)
+        let q = self.x.mul(pp)
+        let x = r.square().sub(ppp).sub(q.double())
+        Xyzz { x, y: r.mul(q.sub(x)).sub(self.y.mul(ppp)), zz: self.zz.mul(pp), zzz: self.zzz.mul(ppp) }
+    }
+
+    // add-2008-s, with the doubling and inverse cases.
+    fn add(self, _ other: Xyzz<F>) -> Xyzz<F> {
+        if self.is_identity() { return other }
+        if other.is_identity() { return self }
+        let u1 = self.x.mul(other.zz)
+        let s1 = self.y.mul(other.zzz)
+        let p = other.x.mul(self.zz).sub(u1)
+        let r = other.y.mul(self.zzz).sub(s1)
+        if p.is_zero() {
+            return if r.is_zero() { self.double() } else { Xyzz::identity() }
+        }
+        let pp = p.square()
+        let ppp = p.mul(pp)
+        let q = u1.mul(pp)
+        let x = r.square().sub(ppp).sub(q.double())
+        Xyzz {
+            x, y: r.mul(q.sub(x)).sub(s1.mul(ppp)), zz: self.zz.mul(other.zz).mul(pp), zzz: self.zzz.mul(other.zzz).mul(ppp),
+        }
+    }
+
+    // Jacobian (x zz, y zzz, zz): x zz / zz^2 = x / zz and y zzz / zz^3 = y / zzz.
+    fn to_point(self) -> Point<F> {
+        if self.is_identity() { return Point::identity() }
+        Point { x: self.x.mul(self.zz), y: self.y.mul(self.zzz), z: self.zz }
+    }
+}
+
 // The window width for Pippenger's method over k points, or 0 when separate
-// double-and-add multiplications cost less. Costs count field
-// multiplications: about 11 for a mixed addition, 16 for an addition and 7
-// for a doubling.
+// multiplications cost less. Costs count field multiplications: 7 for a
+// doubling, 11 for a mixed addition and 16 for an addition in Jacobian
+// coordinates, 10 and 14 for those into and of XYZZ buckets, and about 86
+// for an inversion. A separate multiplication builds [1] P .. [15] P (a
+// doubling and 7 additions), makes them affine (the inversion and 7
+// multiplications each), and runs 255 doublings with the mixed additions of
+// its width-5 NAF's 255 / 6 nonzero digits. In each window of Pippenger's
+// method, up to one point per bucket lands in an empty one, and the running
+// sums over n filled buckets take about n + 2^(c-1) - 2 additions.
 fn msm_window(_ k: usize) -> usize {
     var best: usize = 0
-    var best_cost = k * (255 * 7 + 128 * 11)
+    var best_cost = k * (7 + 7 * 16 + 86 + 8 * 7 + 255 * 7 + 255 / 6 * 11)
     var c: usize = 2
     while c <= 12 {
-        let cost = (255 / c + 1) * (k * 11 + (1 << (c - 1)) * 32) + 255 * 7
+        let buckets: usize = 1 << (c - 1)
+        let filled = if k < buckets { k } else { buckets }
+        let cost = (255 / c + 1) * ((k - filled) * 10 + (filled + buckets - 2) * 14) + 255 * 7
         if cost < best_cost {
             best = c
             best_cost = cost
@@ -303,9 +379,9 @@ fn msm_window(_ k: usize) -> usize {
 }
 
 /// The sum of [scalars[i]] points[i], by Pippenger's bucket method over
-/// Booth-recoded c-bit digits in [-2^(c-1), 2^(c-1)]; None when the buckets
-/// cannot be allocated. Panics unless there is a scalar for each point and
-/// every scalar is below 2^255.
+/// Booth-recoded c-bit digits in [-2^(c-1), 2^(c-1)] with buckets in XYZZ
+/// coordinates; None when the buckets cannot be allocated. Panics unless
+/// there is a scalar for each point and every scalar is below 2^255.
 pub fn msm<F: Field + Copy>(_ points: MemArray<Affine<F>>, _ scalars: MemArray<u256>) -> Option<Point<F>> {
     let k = points.len()
     core::assert(scalars.len() == k)
@@ -317,14 +393,14 @@ pub fn msm<F: Field + Copy>(_ points: MemArray<Affine<F>>, _ scalars: MemArray<u
         return Option::Some(sum)
     }
     let count: usize = 1 << (c - 1)
-    var buckets = MemArray::try_from_fn(count, |_| Point<F>::identity())?
+    var buckets = MemArray::try_from_fn(count, |_| Xyzz<F>::identity())?
     let mask: u256 = (1 << (c + 1) as u256) - 1
     var result = Point::identity()
     var window = 255 / c + 1
     while window > 0 {
         window -= 1
         for _ in 0..c { result = result.double() }
-        for b in 0..count { buckets[b] = Point::identity() }
+        for b in 0..count { buckets[b] = Xyzz::identity() }
         for i in 0..k {
             // Bits c window - 1 through c window + c - 1 of the scalar give the
             // digit (w & 1) + (w >> 1) - 2^c (w >> c).
@@ -338,15 +414,15 @@ pub fn msm<F: Field + Copy>(_ points: MemArray<Affine<F>>, _ scalars: MemArray<u
             }
         }
         // The sum of (b + 1) buckets[b], by running sums from the top.
-        var running = Point::identity()
-        var total = Point::identity()
+        var running = Xyzz::identity()
+        var total = Xyzz::identity()
         var b = count
         while b > 0 {
             b -= 1
             running = running.add(buckets[b])
             total = total.add(running)
         }
-        result = result.add(total)
+        result = result.add(total.to_point())
     }
     Option::Some(result)
 }
