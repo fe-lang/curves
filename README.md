@@ -76,10 +76,9 @@ let valid = p256::verify(hash, r, s, x, y)
   check subgroup membership; use `kzg::decode_kzg_g1` to check both (accepting
   infinity). `multiply_two(a, s, b, t)` requires `a` and `b` in G1 (its
   endomorphism is invalid off G1) and scalars below `ORDER`. `msm(points, scalars)`
-  requires `scalars[i] < 2^255` (reduce modulo `ORDER`; bit 255 is dropped in
-  bucket mode) and `points.len() == scalars.len()` (shorter `scalars` panics;
-  extra entries are ignored), returning `Option::None` if bucket allocation
-  fails. `miller_loop` and `miller_loop_lines` take two pairs and ignore any
+  panics unless `points.len() == scalars.len()` and every scalar is below
+  2^255 (reduce modulo `ORDER`), and returns `Option::None` if bucket
+  allocation fails. `miller_loop` and `miller_loop_lines` take two pairs and ignore any
   pair containing infinity; multiply `Fp12` loop outputs for more pairs, then
   call `final_exponentiation` once on a nonzero result. `map_to_g1` and
   `map_to_g2` take field elements (`Fp`, `Fp2`), not message bytes.
@@ -89,24 +88,23 @@ let valid = p256::verify(hash, r, s, x, y)
   versioned hash.
 - **BN254.** `bn254_curve::Point::to_affine` returns `(0, 0)` for infinity;
   `Point::add_affine(x2:, y2:)` expects a finite point.
-  `bn254::multiply_g1(point, scalar)` reduces `scalar % ORDER`, but ignores
-  `point.z`: `point` must be a finite affine G1 point (`Point::affine(x:, y:)`),
-  not infinity and not an unnormalized Jacobian point. `bn254::in_g2(q)` returns
-  `true` for infinity, and for finite points ignores `q.z`: pass an affine
-  point already checked with `on_curve(x:, y:, b: twist_b())`.
+  `bn254::multiply_g1(x:, y:, scalar)` takes the affine coordinates of a
+  point of G1 and reduces `scalar % ORDER`. `bn254::in_g2(x:, y:)` takes the
+  affine coordinates of a twist point already checked with
+  `on_curve(x:, y:, b: twist_b())`. Neither takes infinity, which is in both
+  groups.
   `bn254_pairing::miller_loop(pairs, count:)` requires `count <= 4` (`CHUNK`)
   and finite, validated G1 and G2 points in `pairs[0..count]` (filter out
   infinity pairs beforehand). `bn254_pairing::final_exponentiation` raises `f`
   to `m * (p^12 - 1) / r` for a fixed `m` coprime to `r`, so `.equals(Fp12::one())`
   checks whether a pairing product is one while non-identity values differ by
   the power `m` from `f^((p^12 - 1) / r)`. `Fp6::frobenius(k)` and
-  `Fp12::frobenius(k)` are defined for `k` in `1..=3` only.
+  `Fp12::frobenius(k)` panic unless `k` is in `1..=3`.
 - **secp256k1 and P-256.** `secp256k1::recover(hash:, recovery_id:, r:, s:)`
-  panics unless `recovery_id <= 1`, `0 < r < N` and `0 < s < N` (`recovery_id`
-  is the y-parity `0` or `1`, not `27`/`28`), and returns `Option::None` when
-  `r` is not a curve x-coordinate or the recovered point is infinity;
-  `PublicKey { x, y }` holds canonical coordinates below `P` (and does not
-  implement `Copy`). `p256::verify(hash:, r:, s:, x:, y:)` checks all ranges
+  returns `Option::None` unless `recovery_id <= 1`, `0 < r < N` and `0 < s < N`
+  (`recovery_id` is the y-parity `0` or `1`, not `27`/`28`), and when `r` is
+  not a curve x-coordinate or the recovered point is infinity;
+  `PublicKey { x, y }` holds canonical coordinates below `P`. `p256::verify(hash:, r:, s:, x:, y:)` checks all ranges
   and curve membership and returns `false` on invalid inputs without panicking.
   Both reduce `hash` modulo `N` internally and accept both `s` and `N - s`
   (callers requiring low-`s` must check `s <= N / 2`).

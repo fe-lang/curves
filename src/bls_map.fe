@@ -125,7 +125,7 @@ const G2_Y_DEN: [[[u64; 6]; 2]; 3] = [
 
 
 /// Square roots and RFC 9380's sgn0 in Fp and Fp2.
-pub trait Root {
+trait Root {
     /// A square root of `self` and true, or else one of `other`, which the
     /// SWU map makes Z^3 u^6 `self` and so a square, and false.
     fn root_or(self, _ other: Self, u: Self) -> (Self, bool)
