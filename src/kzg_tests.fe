@@ -40,6 +40,55 @@ fn bls_base_field_matches_reference_arithmetic() {
     core::assert(Fp::from_canonical([2, 0, 0, 0, 0, 0]).sqrt().is_none())
 }
 
+// x^e by square-and-multiply over the bits of e, with multiplications alone.
+fn power(_ x: Fp, _ e: [u64; 6]) -> Fp {
+    var result = Fp::one()
+    var bit: usize = 384
+    while bit > 0 {
+        bit -= 1
+        result = result.mul(result)
+        let shift: u64 = (bit % 64).downcast_truncate()
+        if (e[bit / 64] >> shift) & 1 == 1 { result = result.mul(x) }
+    }
+    result
+}
+
+#[test]
+fn bls_squares_match_products_and_powers() {
+    // a = 2^380 + 12345 and b = 3^200 mod p, as canonical integers: their
+    // squares and (p + 1) / 4 powers from Python big integers (b's is 3^100).
+    let a = Fp::from_canonical([0x3039, 0, 0, 0, 0, 0x1000000000000000])
+    let b = Fp::from_canonical([0x5bfaff1eaaf8b0a1, 0x83ecf6f6e4a7ae22, 0xfd73d97e447606b6, 0xc21a937a76f3432f, 0x1fd5863c3eb0469e, 0])
+    core::assert(same(a.square().to_canonical(), [0xeab7b11f50f92856, 0x4219ac79ca5af93e, 0xd2f5fd91b9c26899, 0x3e830ccc1fca0b0d, 0x7e0c70edf63f5149, 0x0f3fb7edf74ad894]))
+    core::assert(same(a.sqrt_candidate().to_canonical(), [0x5d846551b70da675, 0xeca59cc7ee49313f, 0xb98cef7789dc3b7f, 0x31857f9307786328, 0x26974a84a9ada3fe, 0x0930dcc05c788970]))
+    core::assert(same(b.sqrt_candidate().to_canonical(), [0xd6947d55cf3813d1, 0x673768565b41f775, 0x5a4653ca, 0, 0, 0]))
+    // Montgomery limbs that stretch the carry chains: all ones under a top
+    // limb one below p's, and p - 1. Their squares and (p + 1) / 4 powers,
+    // as Montgomery limbs, from Python big integers.
+    let ones: u64 = 0xffffffffffffffff
+    let m = Fp::from_montgomery([ones, ones, ones, ones, ones, 0x1a0111ea397fe699])
+    let n = Fp::from_montgomery([0xb9feffffffffaaaa, 0x1eabfffeb153ffff, 0x6730d2a0f6b0f624, 0x64774b84f38512bf, 0x4b1ba7b6434bacd7, 0x1a0111ea397fe69a])
+    core::assert(same(m.square().limbs, [0xf030e3c022780c34, 0x0cd5f378fa4be48f, 0xe1d01ee5a16e9f52, 0x3214a16b68edba5b, 0x31e1dd9b231932b0, 0x16b7a7722f92888a]))
+    core::assert(same(n.square().limbs, [0xf4d38259380b4820, 0x7fe11274d898fafb, 0x343ea97914956dc8, 0x1797ab1458a88de9, 0xed5e64273c4f538b, 0x14fec701e8fb0ce9]))
+    core::assert(same(m.sqrt_candidate().limbs, [0x9ee904f55077d539, 0xcf810ab8d25793dd, 0x616df3e0de81f85d, 0x435c2db049c30289, 0x31044ff2cd6afd0c, 0x0de6c930b11cb54f]))
+    core::assert(same(n.sqrt_candidate().limbs, [0xb9feffffffffaaab, 0x1eabfffeb153ffff, 0x6730d2a0f6b0f624, 0x64774b84f38512be, 0x4b1ba7b6434bacd7, 0x1a0111ea397fe69a]))
+    // Zero and -1 (not a square, and its own (p + 1) / 4 power), one, and
+    // pseudo-random elements and their negations, against products and powers
+    // by multiplication.
+    let minus_one = Fp::one().neg()
+    core::assert(Fp::zero().square().is_zero() && Fp::zero().sqrt_candidate().is_zero())
+    core::assert(Fp::one().square().equals(Fp::one()) && minus_one.square().equals(Fp::one()))
+    core::assert(minus_one.sqrt_candidate().equals(minus_one))
+    let quarter: [u64; 6] = [0xee7fbfffffffeaab, 0x07aaffffac54ffff, 0xd9cc34a83dac3d89, 0xd91dd2e13ce144af, 0x92c6e9ed90d2eb35, 0x0680447a8e5ff9a6]
+    var x = m
+    for _ in 0..32 {
+        x = x.mul(b).add(Fp::one())
+        for y in [x, x.neg()] {
+            core::assert(y.square().equals(y.mul(y)) && y.sqrt_candidate().equals(power(y, quarter)))
+        }
+    }
+}
+
 fn sample() -> Fp12 {
     let step = Fp::from_canonical([0x5bfaff1eaaf8b0a1, 0x83ecf6f6e4a7ae22, 0xfd73d97e447606b6, 0xc21a937a76f3432f, 0x1fd5863c3eb0469e, 0])
     var seed = Fp::from_canonical([7, 0, 0, 0, 0, 0])
